@@ -1,4 +1,5 @@
 import scrapy
+from scrapy.mail import MailSender
 
 
 class SETI_Spider(scrapy.Spider):
@@ -8,8 +9,30 @@ class SETI_Spider(scrapy.Spider):
     HOSTS_URL = 'https://setiathome.berkeley.edu/hosts_user.php?sort=rpc_time&rev=0&show_all=1&userid='
     COLUMNS = ['User ID', 'SETI@home member since', 'Country', 'Total credit', 'Recent average credit', 'SETI@home classic workunits', 'SETI@home classic CPU time', 'Operating System', 'Last contact']
     userids = range(1,11)
+    total = len(userids)
+    smtphost = None
+    smtpport = None
+    mailfrom = None
+    smtpuser = None
+    smtppass = None
+    mailto = None
+    mailer = MailSender(smtphost,mailfrom,smtpuser,smtppass,smtpport,smtpssl=True)
+
+    def __init__(self, stats):
+        self.stats = stats
+        self.stats.set_value('finished_num', 0)
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        spider = cls(crawler.stats)
+        crawler.signals.connect(spider.spider_closed, signal=scrapy.signals.spider_closed)
+        return spider
+
+    def spider_closed(self):
+        return self.mailer.send(to=self.mailto,subject='Spider finished',body='Spider finished.')
 
     def start_requests(self):
+        self.logger.info(f"Start spider, total tasks to handle: {len(self.userids)}")
         for id in self.userids:
             yield scrapy.Request(url=self.USERS_URL+str(id))
 
@@ -26,6 +49,8 @@ class SETI_Spider(scrapy.Spider):
             # fetch host info
             yield response.follow(url=self.HOSTS_URL+response.url.split('userid=')[-1], callback=self.parse_host, cb_kwargs={'row':row})
         else:
+            self.stats.inc_value('finished_num')
+            self.logger.info(f'Task finished {self.stats.get_value("finished_num")}/{self.total}')
             yield None
 
     def parse_host(self, response, row):
@@ -43,5 +68,7 @@ class SETI_Spider(scrapy.Spider):
                     os = 'Other'
             row['Operating System'] = os
             row['Last contact'] = latest_date
+        self.stats.inc_value('finished_num')
+        self.logger.info(f'Task finished {self.stats.get_value("finished_num")}/{self.total}')
         yield row
         
